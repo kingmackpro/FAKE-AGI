@@ -4,6 +4,7 @@ const express = require("express");
 const { handleUserMessage } = require("./core/brain");
 const { getUpdatesSince } = require("./core/memory");
 const { runCycle, setUserActive } = require("./core/scheduler");
+const { getThoughts } = require("./core/thoughts");
 
 const PORT = Number.parseInt(process.env.PORT || "3000", 10);
 const USER_IDLE_MS = 60_000;
@@ -23,6 +24,15 @@ app.get("/health", (req, res) => {
 app.get("/updates", (req, res) => {
   const since = req.query.since || 0;
   res.json({ updates: getUpdatesSince(since) });
+});
+
+app.get("/thoughts", (req, res) => {
+  res.json({
+    thoughts: getThoughts({
+      since: req.query.since || 0,
+      taskId: req.query.taskId || null
+    })
+  });
 });
 
 app.post("/chat", async (req, res) => {
