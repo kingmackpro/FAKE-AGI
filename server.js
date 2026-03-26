@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const { handleUserMessage } = require("./core/brain");
 const { getUpdatesSince } = require("./core/memory");

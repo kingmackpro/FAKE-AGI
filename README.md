@@ -52,20 +52,33 @@ Stored memory lives in `memory/longterm.json` and is injected into every agent p
 npm install
 ```
 
-2. Point the app at Ollama or your ngrok tunnel
+2. Create a local `.env` file from the example
 
-```powershell
-$env:OLLAMA_URL="https://your-ngrok-url.ngrok-free.app/api/chat"
-$env:OLLAMA_MODEL="qwen2.5"
+```bash
+cp .env.example .env
 ```
 
-3. Start the app
+On Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+3. Edit `.env` and point it at Ollama or your ngrok tunnel
+
+```env
+OLLAMA_URL=https://your-ngrok-url.ngrok-free.app/api/chat
+OLLAMA_MODEL=qwen2.5
+PORT=3000
+```
+
+4. Start the app
 
 ```bash
 npm start
 ```
 
-4. Open the UI
+5. Open the UI
 
 ```text
 http://localhost:3000
