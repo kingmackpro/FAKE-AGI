@@ -2,14 +2,55 @@ const { classifyProblem } = require("./classifier");
 const { runCritic } = require("./critic");
 const { runFastResponder } = require("./fastResponder");
 const { runFinalizer } = require("./finalizer");
-const { extractAndStoreFacts, pushUpdate, rememberInteraction } = require("./memory");
-const { completeTask, enqueueImprovementTask, getNextQueuedTask, writeTask } = require("./taskManager");
-const { logThought } = require("./thoughts");
+const { extractAndStoreFacts, pushUpdate, rememberInteraction, removeTaskMemory } = require("./memory");
+const {
+  completeTask,
+  enqueueImprovementTask,
+  getLatestActiveTask,
+  getNextQueuedTask,
+  listActiveTasks,
+  removeTask,
+  updateTaskStatus,
+  writeTask
+} = require("./taskManager");
+const { logThought, removeTaskThoughts } = require("./thoughts");
 const { runThinker } = require("./thinker");
 
 const TARGET_CONFIDENCE = 90;
 const TARGET_SCORE = 90;
 const MAX_STAGNANT_ITERATIONS = 2;
+const STOP_PATTERNS = [
+  /\bstop working on that\b/i,
+  /\bforget that problem\b/i,
+  /\bcancel that task\b/i,
+  /\bi don't need that anymore\b/i,
+  /\bstop that\b/i,
+  /\bcancel\b/i,
+  /\bforget that\b/i
+];
+const PAUSE_PATTERNS = [
+  /\bpause that\b/i,
+  /\bpause the task\b/i,
+  /\bhold off on that\b/i
+];
+const RESUME_PATTERNS = [
+  /\bresume that\b/i,
+  /\bcontinue that\b/i,
+  /\bstart that again\b/i,
+  /\bresume the task\b/i
+];
+const PROGRESS_PATTERNS = [
+  /\bwhat did you do so far\b/i,
+  /\bhow far did you get\b/i,
+  /\bprogress\b/i,
+  /\bstatus of that\b/i
+];
+const STOPWORDS = new Set([
+  "the", "a", "an", "that", "this", "on", "of", "for", "to", "and", "or",
+  "please", "task", "problem", "work", "working", "resume", "pause", "cancel",
+  "stop", "forget", "what", "did", "you", "so", "far", "how", "get", "i", "need",
+  "dont", "don't", "anymore"
+]);
 
 function naturalFollowUpMessage(classification, taskId) {
   if (classification === "YES" && taskId) {
@@ -28,6 +69,181 @@ function logAgent(taskId, mode, agent, text, extra = {}) {
     score: extra.score,
     confidence: extra.confidence
   });
+}
+
+function tokenize(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token && !STOPWORDS.has(token));
+}
+
+function scoreTaskMatch(userInput, task) {
+  const inputTokens = tokenize(userInput);
+  const taskTokens = new Set(tokenize(task.userInput));
+  let score = 0;
+
+  for (const token of inputTokens) {
+    if (taskTokens.has(token)) {
+      score += 1;
+    }
+  }
+
+  if (String(userInput).toLowerCase().includes(String(task.userInput).toLowerCase())) {
+    score += 5;
+  }
+
+  return score;
+}
+
+function resolveTaskFromMessage(userInput, statuses) {
+  const tasks = listActiveTasks().filter((task) => {
+    if (!Array.isArray(statuses) || !statuses.length) {
+      return true;
+    }
+
+    return statuses.includes(task.status);
+  });
+  if (!tasks.length) {
+    return null;
+  }
+
+  let bestTask = null;
+  let bestScore = 0;
+
+  for (const task of tasks) {
+    const score = scoreTaskMatch(userInput, task);
+    if (score > bestScore) {
+      bestScore = score;
+      bestTask = task;
+    }
+  }
+
+  if (bestTask && bestScore > 0) {
+    return bestTask;
+  }
+
+  const latestTask = getLatestActiveTask();
+  if (!latestTask) {
+    return null;
+  }
+
+  if (Array.isArray(statuses) && statuses.length && !statuses.includes(latestTask.status)) {
+    return null;
+  }
+
+  return latestTask;
+}
+
+function detectCommandIntent(userInput) {
+  if (STOP_PATTERNS.some((pattern) => pattern.test(userInput))) {
+    return "cancel";
+  }
+
+  if (PAUSE_PATTERNS.some((pattern) => pattern.test(userInput))) {
+    return "pause";
+  }
+
+  if (RESUME_PATTERNS.some((pattern) => pattern.test(userInput))) {
+    return "resume";
+  }
+
+  if (PROGRESS_PATTERNS.some((pattern) => pattern.test(userInput))) {
+    return "progress";
+  }
+
+  return null;
+}
+
+function cancelTaskByMessage(userInput) {
+  const task = resolveTaskFromMessage(userInput, ["queued", "running", "paused"]);
+  if (!task) {
+    return {
+      reply: "There isn't an active background task to cancel.",
+      queuedTaskId: null,
+      followUpMessage: null,
+      storedFacts: []
+    };
+  }
+
+  removeTask(task.id);
+  removeTaskMemory(task.id);
+  removeTaskThoughts(task.id);
+
+  return {
+    reply: `Okay, I stopped working on "${task.userInput}".`,
+    queuedTaskId: null,
+    followUpMessage: null,
+    storedFacts: []
+  };
+}
+
+function pauseTaskByMessage(userInput) {
+  const task = resolveTaskFromMessage(userInput, ["queued", "running"]);
+  if (!task) {
+    return {
+      reply: "There isn't an active background task to pause.",
+      queuedTaskId: null,
+      followUpMessage: null,
+      storedFacts: []
+    };
+  }
+
+  updateTaskStatus(task.id, "paused");
+  logAgent(task.id, "deep", "system", "Task paused by user.");
+
+  return {
+    reply: `Paused background work on "${task.userInput}".`,
+    queuedTaskId: null,
+    followUpMessage: null,
+    storedFacts: []
+  };
+}
+
+function resumeTaskByMessage(userInput) {
+  const task = resolveTaskFromMessage(userInput, ["paused"]);
+  if (!task) {
+    return {
+      reply: "There isn't a paused task to resume.",
+      queuedTaskId: null,
+      followUpMessage: null,
+      storedFacts: []
+    };
+  }
+
+  updateTaskStatus(task.id, "queued");
+  logAgent(task.id, "deep", "system", "Task resumed by user.");
+
+  return {
+    reply: `Resumed background work on "${task.userInput}".`,
+    queuedTaskId: task.id,
+    followUpMessage: "I'll continue improving it when deep mode runs again.",
+    storedFacts: []
+  };
+}
+
+function progressTaskByMessage(userInput) {
+  const task = resolveTaskFromMessage(userInput, ["queued", "running", "paused"]);
+  if (!task) {
+    return {
+      reply: "There isn't an active task in progress right now.",
+      queuedTaskId: null,
+      followUpMessage: null,
+      storedFacts: []
+    };
+  }
+
+  const currentBest = task.bestAnswer || "No draft saved yet.";
+  const score = task.bestScore ?? 0;
+  const iterations = task.attempts ?? 0;
+
+  return {
+    reply: `Here's the current progress on "${task.userInput}":\n\ncurrent_best:\n${currentBest}\n\nscore: ${score}\niterations: ${iterations}`,
+    queuedTaskId: task.id,
+    followUpMessage: null,
+    storedFacts: []
+  };
 }
 
 async function runFastMode({ userInput }) {
@@ -103,6 +319,24 @@ async function runDeepMode({ userInput, task }) {
 }
 
 async function handleUserMessage(userInput) {
+  const commandIntent = detectCommandIntent(userInput);
+
+  if (commandIntent === "cancel") {
+    return cancelTaskByMessage(userInput);
+  }
+
+  if (commandIntent === "pause") {
+    return pauseTaskByMessage(userInput);
+  }
+
+  if (commandIntent === "resume") {
+    return resumeTaskByMessage(userInput);
+  }
+
+  if (commandIntent === "progress") {
+    return progressTaskByMessage(userInput);
+  }
+
   const classification = await classifyProblem(userInput);
   logAgent(null, "fast", "classifier", classification);
 

@@ -25,6 +25,12 @@ function readTask(taskId) {
   return readJson(`problems/${taskId}.json`, {});
 }
 
+function listActiveTasks() {
+  return readQueue()
+    .map((item) => readTask(item.id))
+    .filter((task) => task && task.id);
+}
+
 function writeTask(task) {
   const nextTask = {
     ...task,
@@ -91,12 +97,19 @@ function getNextQueuedTask() {
     const next = queue[0];
     const task = readTask(next.id);
 
-    if (task.id) {
+    if (task.id && task.status !== "paused") {
       return task;
     }
 
-    queue.shift();
+    if (!task.id) {
+      queue.shift();
+      writeQueue(queue);
+      continue;
+    }
+
+    queue.push(queue.shift());
     writeQueue(queue);
+    return null;
   }
 
   return null;
@@ -108,11 +121,43 @@ function completeTask(taskId) {
   removeFile(`problems/${taskId}.json`);
 }
 
+function removeTask(taskId) {
+  const queue = readQueue().filter((item) => item.id !== taskId);
+  writeQueue(queue);
+  removeFile(`problems/${taskId}.json`);
+}
+
+function updateTaskStatus(taskId, status) {
+  const task = readTask(taskId);
+  if (!task.id) {
+    return null;
+  }
+
+  task.status = status;
+  return writeTask(task);
+}
+
+function getLatestActiveTask() {
+  const queue = readQueue();
+  for (let index = queue.length - 1; index >= 0; index -= 1) {
+    const task = readTask(queue[index].id);
+    if (task.id) {
+      return task;
+    }
+  }
+
+  return null;
+}
+
 module.exports = {
   completeTask,
   enqueueImprovementTask,
   getNextQueuedTask,
+  getLatestActiveTask,
+  listActiveTasks,
   readQueue,
   readTask,
+  removeTask,
+  updateTaskStatus,
   writeTask
 };

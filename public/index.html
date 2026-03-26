@@ -26,13 +26,16 @@
 }
 
 html {
+  height: 100%;
   scroll-behavior: smooth;
 }
 
 body {
+  height: 100vh;
   margin: 0;
   font-family: "Segoe UI", Arial, sans-serif;
   color: var(--text);
+  overflow: hidden;
   background:
     radial-gradient(circle at top left, rgba(79, 140, 255, 0.18), transparent 28%),
     radial-gradient(circle at top right, rgba(39, 196, 168, 0.12), transparent 26%),
@@ -40,20 +43,23 @@ body {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
   padding: 18px;
+  overflow: hidden;
 }
 
 .workspace {
   display: grid;
   grid-template-columns: minmax(340px, 1.6fr) minmax(280px, 0.9fr) minmax(280px, 0.9fr);
   gap: 16px;
-  min-height: calc(100vh - 36px);
+  height: calc(100vh - 36px);
+  min-height: 0;
 }
 
 .panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
   border: 1px solid var(--border);
   border-radius: 24px;
@@ -114,6 +120,7 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -268,18 +275,20 @@ input::placeholder {
 
   .panel.logs-panel {
     grid-column: 1 / -1;
-    min-height: 260px;
+    height: 260px;
   }
 }
 
 @media (max-width: 820px) {
   .workspace {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+    height: calc(100vh - 36px);
   }
 
   .panel,
   .panel.logs-panel {
-    min-height: 320px;
+    height: 100%;
   }
 }
 </style>

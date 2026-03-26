@@ -48,7 +48,13 @@ function getThoughts({ since = 0, taskId } = {}) {
   });
 }
 
+function removeTaskThoughts(taskId) {
+  const thoughts = readThoughts().filter((thought) => thought.taskId !== taskId);
+  writeThoughts(thoughts);
+}
+
 module.exports = {
   getThoughts,
-  logThought
+  logThought,
+  removeTaskThoughts
 };

@@ -202,6 +202,17 @@ function getUpdatesSince(since = 0) {
   return updates.filter((update) => update.createdAt > numericSince);
 }
 
+function removeTaskMemory(taskId) {
+  const memory = getLongtermMemory();
+  const interactions = Array.isArray(memory.interactions) ? memory.interactions : [];
+  const updates = Array.isArray(memory.updates) ? memory.updates : [];
+
+  memory.interactions = interactions.filter((entry) => entry.taskId !== taskId);
+  memory.updates = updates.filter((entry) => entry.taskId !== taskId);
+
+  saveLongtermMemory(memory);
+}
+
 module.exports = {
   extractAndStoreFacts,
   formatMemoryForPrompt,
@@ -209,5 +220,6 @@ module.exports = {
   getUpdatesSince,
   normalizeKey,
   pushUpdate,
+  removeTaskMemory,
   rememberInteraction
 };
