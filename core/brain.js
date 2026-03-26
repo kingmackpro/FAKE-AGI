@@ -148,10 +148,33 @@ async function runBackgroundCycle() {
 
   logAgent(task.id, "deep", "system", `Deep mode iteration ${task.attempts} started.`);
 
-  const result = await runDeepMode({
-    userInput: task.userInput,
-    task
-  });
+  let result;
+
+  try {
+    result = await runDeepMode({
+      userInput: task.userInput,
+      task
+    });
+  } catch (error) {
+    task.failedAttempts = (task.failedAttempts || 0) + 1;
+    task.status = task.failedAttempts >= 2 ? "failed" : "queued";
+    writeTask(task);
+
+    logAgent(task.id, "deep", "system", `Deep mode failed: ${error.message}`);
+
+    if (task.failedAttempts >= 2) {
+      completeTask(task.id);
+      return {
+        taskId: task.id,
+        status: "failed"
+      };
+    }
+
+    return {
+      taskId: task.id,
+      status: "queued"
+    };
+  }
 
   const improved =
     result.confidence > (task.bestConfidence || 0) ||

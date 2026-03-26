@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const { handleUserMessage } = require("./core/brain");
 const { getUpdatesSince } = require("./core/memory");
+const { resetSystemState } = require("./core/reset");
 const { runCycle, setUserActive } = require("./core/scheduler");
 const { getThoughts } = require("./core/thoughts");
 
@@ -51,6 +52,13 @@ app.post("/chat", async (req, res) => {
     console.error("Chat request failed:", error.message);
     return res.status(502).json({ error: "Failed to process the message with Ollama" });
   }
+});
+
+app.post("/reset", (req, res) => {
+  const result = resetSystemState();
+  lastSeen = Date.now();
+  setUserActive(true);
+  res.json(result);
 });
 
 setInterval(() => {
