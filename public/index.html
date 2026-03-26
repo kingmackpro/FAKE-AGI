@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fake AGI</title>
+
+<style>
+body {
+  margin: 0;
+  padding: 16px;
+  box-sizing: border-box;
+  font-family: Arial, sans-serif;
+  background: #0f172a;
+  color: white;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+
+.chat-container {
+  width: min(100%, 400px);
+  height: min(600px, calc(100vh - 32px));
+  background: #1e293b;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+}
+
+.header {
+  padding: 15px;
+  background: #020617;
+  font-weight: bold;
+  text-align: center;
+}
+
+.messages {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.msg {
+  max-width: 70%;
+  padding: 10px;
+  margin: 5px 0;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.user {
+  align-self: flex-end;
+  background: #3b82f6;
+}
+
+.bot {
+  align-self: flex-start;
+  background: #334155;
+}
+
+.input-area {
+  display: flex;
+  padding: 10px;
+  background: #020617;
+}
+
+input {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  outline: none;
+}
+
+button {
+  margin-left: 10px;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: white;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #2563eb;
+}
+
+.typing {
+  font-size: 12px;
+  opacity: 0.6;
+}
+</style>
+</head>
+
+<body>
+
+<div class="chat-container">
+  <div class="header">Fake AGI</div>
+
+  <div id="messages" class="messages"></div>
+
+  <div class="input-area">
+    <input id="input" placeholder="Ask something..." />
+    <button onclick="send()">Send</button>
+  </div>
+</div>
+
+<script>
+const API_URL = "/chat";
+const MAX_MESSAGES = 100;
+
+const messages = document.getElementById("messages");
+const input = document.getElementById("input");
+
+function addMessage(text, type) {
+  const div = document.createElement("div");
+  div.className = "msg " + type;
+  div.innerText = text;
+  messages.appendChild(div);
+
+  while (messages.children.length > MAX_MESSAGES) {
+    messages.removeChild(messages.firstChild);
+  }
+
+  messages.scrollTop = messages.scrollHeight;
+}
+
+async function send() {
+  const text = input.value.trim();
+  if (!text) return;
+
+  addMessage(text, "user");
+  input.value = "";
+
+  const typing = document.createElement("div");
+  typing.className = "msg bot typing";
+  typing.innerText = "thinking...";
+  messages.appendChild(typing);
+
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Request failed");
+    }
+
+    typing.remove();
+    addMessage(data.reply, "bot");
+  } catch (err) {
+    typing.remove();
+    addMessage(err.message || "error connecting to AI", "bot");
+  }
+}
+
+input.addEventListener("keypress", function (e) {
+  if (e.key === "Enter") send();
+});
+</script>
+
+</body>
+</html>
