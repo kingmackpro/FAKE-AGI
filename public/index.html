@@ -20,8 +20,8 @@ body {
 }
 
 .chat-container {
-  width: min(100%, 400px);
-  height: min(600px, calc(100vh - 32px));
+  width: min(100%, 460px);
+  height: min(720px, calc(100vh - 32px));
   background: #1e293b;
   border-radius: 16px;
   display: flex;
@@ -43,14 +43,15 @@ body {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  gap: 6px;
 }
 
 .msg {
-  max-width: 70%;
+  max-width: 80%;
   padding: 10px;
-  margin: 5px 0;
   border-radius: 12px;
   font-size: 14px;
+  line-height: 1.4;
 }
 
 .user {
@@ -61,6 +62,16 @@ body {
 .bot {
   align-self: flex-start;
   background: #334155;
+}
+
+.update {
+  align-self: flex-start;
+  background: #14532d;
+}
+
+.meta {
+  font-size: 12px;
+  opacity: 0.7;
 }
 
 .input-area {
@@ -79,21 +90,12 @@ input {
 
 button {
   margin-left: 10px;
-  padding: 10px;
+  padding: 10px 14px;
   border: none;
   border-radius: 8px;
   background: #3b82f6;
   color: white;
   cursor: pointer;
-}
-
-button:hover {
-  background: #2563eb;
-}
-
-.typing {
-  font-size: 12px;
-  opacity: 0.6;
 }
 </style>
 </head>
@@ -101,27 +103,26 @@ button:hover {
 <body>
 
 <div class="chat-container">
-  <div class="header">Fake AGI</div>
-
+  <div class="header">Fake AGI Multi-Agent Chat</div>
   <div id="messages" class="messages"></div>
 
   <div class="input-area">
-    <input id="input" placeholder="Ask something..." />
+    <input id="input" placeholder="Ask something or define a memory like apple = banana" />
     <button onclick="send()">Send</button>
   </div>
 </div>
 
 <script>
-const API_URL = "/chat";
-const MAX_MESSAGES = 100;
+const MAX_MESSAGES = 120;
+let lastUpdateTimestamp = 0;
 
 const messages = document.getElementById("messages");
 const input = document.getElementById("input");
 
-function addMessage(text, type) {
+function appendMessage(html, className) {
   const div = document.createElement("div");
-  div.className = "msg " + type;
-  div.innerText = text;
+  div.className = "msg " + className;
+  div.innerHTML = html;
   messages.appendChild(div);
 
   while (messages.children.length > MAX_MESSAGES) {
@@ -135,38 +136,63 @@ async function send() {
   const text = input.value.trim();
   if (!text) return;
 
-  addMessage(text, "user");
+  appendMessage(text, "user");
   input.value = "";
 
   const typing = document.createElement("div");
-  typing.className = "msg bot typing";
+  typing.className = "msg bot";
   typing.innerText = "thinking...";
   messages.appendChild(typing);
 
   try {
-    const res = await fetch(API_URL, {
+    const response = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text })
     });
 
-    const data = await res.json();
+    const data = await response.json();
+    typing.remove();
 
-    if (!res.ok) {
-      throw new Error(data.error || "Request failed");
+    if (!response.ok) {
+      throw new Error(data.error || "request failed");
     }
 
+    appendMessage(
+      `${data.reply}<div class="meta">confidence: ${data.confidence} | queued: ${data.queuedTaskId ? "yes" : "no"}</div>`,
+      "bot"
+    );
+  } catch (error) {
     typing.remove();
-    addMessage(data.reply, "bot");
-  } catch (err) {
-    typing.remove();
-    addMessage(err.message || "error connecting to AI", "bot");
+    appendMessage(error.message || "request failed", "bot");
   }
 }
 
-input.addEventListener("keypress", function (e) {
-  if (e.key === "Enter") send();
+async function pollUpdates() {
+  try {
+    const response = await fetch(`/updates?since=${lastUpdateTimestamp}`);
+    const data = await response.json();
+
+    for (const update of data.updates || []) {
+      lastUpdateTimestamp = Math.max(lastUpdateTimestamp, update.createdAt || 0);
+      appendMessage(
+        `Improved answer for: "${update.originalQuestion}"<br><br>${update.answer}<div class="meta">offline confidence: ${update.confidence}</div>`,
+        "update"
+      );
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+input.addEventListener("keypress", function (event) {
+  if (event.key === "Enter") {
+    send();
+  }
 });
+
+setInterval(pollUpdates, 5000);
+pollUpdates();
 </script>
 
 </body>

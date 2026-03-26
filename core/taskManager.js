@@ -1,139 +1,118 @@
-const fs = require("fs");
-const path = require("path");
+const { readJson, removeFile, writeJson } = require("./store");
 
+const QUEUE_PATH = "memory/dolist.json";
+const TASK_HISTORY_LIMIT = 8;
 const MAX_QUEUE_LENGTH = 50;
-const MAX_ARCHIVED_TASKS = 100;
-const DEFAULT_LONGTERM_MEMORY = { user: {}, ai: { completedTasks: [] } };
 
-function resolvePath(filePath) {
-  return path.resolve(__dirname, "..", filePath);
+function defaultQueue() {
+  return [];
 }
 
-function ensureFile(filePath) {
-  const absolutePath = resolvePath(filePath);
-  const directory = path.dirname(absolutePath);
-
-  fs.mkdirSync(directory, { recursive: true });
-
-  if (!fs.existsSync(absolutePath)) {
-    const fallbackData = filePath.endsWith("dolist.json")
-      ? []
-      : filePath.endsWith("longterm.json")
-        ? DEFAULT_LONGTERM_MEMORY
-        : {};
-
-    fs.writeFileSync(absolutePath, JSON.stringify(fallbackData, null, 2));
-  }
-
-  return absolutePath;
+function createTaskId() {
+  return `p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function read(filePath) {
-  const absolutePath = ensureFile(filePath);
-
-  try {
-    return JSON.parse(fs.readFileSync(absolutePath, "utf8"));
-  } catch (error) {
-    console.warn(`Failed to parse ${filePath}. Resetting it.`, error.message);
-
-    const fallbackData = filePath.endsWith("dolist.json")
-      ? []
-      : filePath.endsWith("longterm.json")
-        ? DEFAULT_LONGTERM_MEMORY
-        : {};
-
-    write(filePath, fallbackData);
-    return fallbackData;
-  }
+function readQueue() {
+  const queue = readJson(QUEUE_PATH, defaultQueue());
+  return Array.isArray(queue) ? queue : [];
 }
 
-function write(filePath, data) {
-  const absolutePath = ensureFile(filePath);
-  fs.writeFileSync(absolutePath, JSON.stringify(data, null, 2), "utf8");
+function writeQueue(queue) {
+  writeJson(QUEUE_PATH, queue, defaultQueue());
 }
 
-function archiveTask(problem) {
-  const memory = read("memory/longterm.json");
-  const completedTasks = Array.isArray(memory.ai?.completedTasks)
-    ? memory.ai.completedTasks
-    : [];
+function readTask(taskId) {
+  return readJson(`problems/${taskId}.json`, {});
+}
 
-  completedTasks.push({
-    id: problem.id,
-    problem: problem.problem,
-    status: problem.status,
-    score: problem.score,
-    attempts: problem.attempts,
-    bestAnswer: problem.current_best,
-    completedAt: new Date().toISOString()
-  });
-
-  memory.ai = {
-    ...(memory.ai || {}),
-    completedTasks: completedTasks.slice(-MAX_ARCHIVED_TASKS)
+function writeTask(task) {
+  const nextTask = {
+    ...task,
+    history: Array.isArray(task.history) ? task.history.slice(-TASK_HISTORY_LIMIT) : [],
+    updatedAt: new Date().toISOString()
   };
 
-  write("memory/longterm.json", memory);
+  writeJson(`problems/${nextTask.id}.json`, nextTask, {});
+  return nextTask;
 }
 
-function removeProblemFile(taskId) {
-  const absolutePath = resolvePath(`problems/${taskId}.json`);
-
-  if (fs.existsSync(absolutePath)) {
-    fs.unlinkSync(absolutePath);
-  }
+function findQueuedTaskByInput(userInput) {
+  return readQueue().find((task) => task.userInput === userInput);
 }
 
-function addTask(question) {
-  const normalizedQuestion = String(question || "").trim();
-
-  if (!normalizedQuestion) {
-    return null;
-  }
-
-  const rawList = read("memory/dolist.json");
-  const list = Array.isArray(rawList) ? rawList : [];
-
-  const existingTask = list.find((item) => item.problem === normalizedQuestion);
+function enqueueImprovementTask({ userInput, currentAnswer, confidence, score }) {
+  const existingTask = findQueuedTaskByInput(userInput);
   if (existingTask) {
     return existingTask.id;
   }
 
-  const id = `p_${Date.now()}`;
+  const id = createTaskId();
   const now = new Date().toISOString();
-
-  const problem = {
+  const task = writeTask({
     id,
-    problem: normalizedQuestion,
-    score: 0,
+    userInput,
+    status: "queued",
     attempts: 0,
-    maxAttempts: 3,
-    status: "pending",
-    current_best: "",
-    lastFeedback: "",
+    stagnantIterations: 0,
+    maxIterations: 4,
+    initialAnswer: currentAnswer,
+    initialConfidence: confidence,
+    initialScore: score,
+    bestAnswer: currentAnswer,
+    bestConfidence: confidence,
+    bestScore: score,
+    history: [],
     createdAt: now,
     updatedAt: now
-  };
+  });
 
-  write(`problems/${id}.json`, problem);
-
-  const nextList = list.concat({
+  const queue = readQueue();
+  queue.push({
     id,
-    problem: normalizedQuestion,
-    priority: "high",
+    userInput,
     createdAt: now
   });
 
-  while (nextList.length > MAX_QUEUE_LENGTH) {
-    const removedTask = nextList.shift();
-    if (removedTask?.id) {
-      removeProblemFile(removedTask.id);
+  while (queue.length > MAX_QUEUE_LENGTH) {
+    const removed = queue.shift();
+    if (removed?.id) {
+      removeFile(`problems/${removed.id}.json`);
     }
   }
 
-  write("memory/dolist.json", nextList);
-
-  return id;
+  writeQueue(queue);
+  return task.id;
 }
 
-module.exports = { addTask, archiveTask, read, removeProblemFile, write };
+function getNextQueuedTask() {
+  const queue = readQueue();
+
+  while (queue.length) {
+    const next = queue[0];
+    const task = readTask(next.id);
+
+    if (task.id) {
+      return task;
+    }
+
+    queue.shift();
+    writeQueue(queue);
+  }
+
+  return null;
+}
+
+function completeTask(taskId) {
+  const queue = readQueue().filter((item) => item.id !== taskId);
+  writeQueue(queue);
+  removeFile(`problems/${taskId}.json`);
+}
+
+module.exports = {
+  completeTask,
+  enqueueImprovementTask,
+  getNextQueuedTask,
+  readQueue,
+  readTask,
+  writeTask
+};

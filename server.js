@@ -1,6 +1,6 @@
 const express = require("express");
-const { chat } = require("./core/ai");
-const { addTask } = require("./core/taskManager");
+const { handleUserMessage } = require("./core/brain");
+const { getUpdatesSince } = require("./core/memory");
 const { runCycle, setUserActive } = require("./core/scheduler");
 
 const PORT = Number.parseInt(process.env.PORT || "3000", 10);
@@ -9,7 +9,7 @@ const USER_IDLE_CHECK_MS = 5_000;
 const BACKGROUND_CYCLE_MS = 15_000;
 
 const app = express();
-app.use(express.json({ limit: "16kb" }));
+app.use(express.json({ limit: "24kb" }));
 app.use(express.static("public"));
 
 let lastSeen = Date.now();
@@ -18,9 +18,13 @@ app.get("/health", (req, res) => {
   res.json({ ok: true, lastSeen });
 });
 
+app.get("/updates", (req, res) => {
+  const since = req.query.since || 0;
+  res.json({ updates: getUpdatesSince(since) });
+});
+
 app.post("/chat", async (req, res) => {
   const userMsg = String(req.body?.message || "").trim();
-
   if (!userMsg) {
     return res.status(400).json({ error: "message is required" });
   }
@@ -29,20 +33,11 @@ app.post("/chat", async (req, res) => {
   setUserActive(true);
 
   try {
-    const reply = await chat([
-      { role: "user", content: userMsg }
-    ]);
-
-    let taskId = null;
-
-    if (reply.length < 50) {
-      taskId = addTask(userMsg);
-    }
-
-    return res.json({ reply, queuedTaskId: taskId });
+    const result = await handleUserMessage(userMsg);
+    return res.json(result);
   } catch (error) {
     console.error("Chat request failed:", error.message);
-    return res.status(502).json({ error: "Failed to contact the AI backend" });
+    return res.status(502).json({ error: "Failed to process the message with Ollama" });
   }
 });
 
@@ -54,7 +49,7 @@ setInterval(() => {
 
 setInterval(() => {
   runCycle().catch((error) => {
-    console.error("Background cycle failed:", error.message);
+    console.error("Scheduled background cycle failed:", error.message);
   });
 }, BACKGROUND_CYCLE_MS);
 

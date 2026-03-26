@@ -1,78 +1,71 @@
 # Fake AGI
 
-Fake AGI is a small Express app that:
+Fake AGI is now a real multi-agent Ollama workflow built with Node.js.
 
-- sends a user prompt to an LLM
-- returns the immediate response
-- queues short or weak answers for background retry when the user goes idle
+## What it does
 
-The project is intentionally simple, but it now has guardrails so the background worker does not grow memory and disk usage forever.
+- stores user-defined facts in JSON memory
+- injects memory into every agent prompt
+- runs three real agents with separate system prompts:
+  - thinker
+  - critic
+  - finalizer
+- keeps improving weak answers in the background while the user is offline
+- delivers improved answers later through `/updates`
 
-## What was fixed
-
-The main memory issue was not a classic heap leak inside Node. It was unbounded work growth:
-
-- queued tasks could stay alive forever if the critic score never improved
-- duplicate prompts could be added to the queue repeatedly
-- finished work stayed behind as problem files
-- the browser UI kept every rendered message forever
-
-Those issues have been fixed by:
-
-- giving each task a bounded number of attempts
-- stopping background work once the score is good enough or retries are exhausted
-- deduplicating queued prompts
-- removing completed task files after archiving them
-- capping queue size and archived task history
-- capping the number of chat messages kept in the browser
-
-## Project structure
+## Architecture
 
 ```text
-.
-|-- core/
-|   |-- ai.js
-|   |-- critic.js
-|   |-- scheduler.js
-|   `-- taskManager.js
-|-- memory/
-|   |-- dolist.json
-|   `-- longterm.json
-|-- problems/
-|-- public/
-|   `-- index.html
-`-- server.js
+server.js
+  -> core/brain.js
+      -> core/memory.js
+      -> core/thinker.js
+      -> core/critic.js
+      -> core/finalizer.js
+      -> core/taskManager.js
+      -> core/context.js
+      -> core/ai.js
 ```
 
-## Requirements
+## Memory behavior
 
-- Node.js 18+
-- An Ollama-compatible chat endpoint
+The system extracts explicit memory from user input such as:
 
-By default the app expects Ollama at `http://127.0.0.1:11434/api/chat`.
+- `apple = banana`
+- `remember that my favorite color is green`
+
+Stored memory lives in `memory/longterm.json` and is injected into every agent prompt. Memory is treated as authoritative for that user session, even if it conflicts with real-world facts.
+
+## Background improvement behavior
+
+- live chat returns an immediate multi-agent answer
+- if confidence or score is low, the task is added to `memory/dolist.json`
+- when the user is idle, the background loop re-runs the multi-agent pipeline
+- if the answer gets better, the system stores an update
+- the frontend polls `/updates` and shows the improved answer later
 
 ## Setup
 
-1. Install dependencies:
+1. Install dependencies
 
 ```bash
 npm install
 ```
 
-2. Set environment variables if your model endpoint is not the default:
+2. Point the app at Ollama or your ngrok tunnel
 
 ```powershell
-$env:OLLAMA_URL="http://127.0.0.1:11434/api/chat"
+$env:OLLAMA_URL="https://your-ngrok-url.ngrok-free.app/api/chat"
 $env:OLLAMA_MODEL="qwen2.5"
 ```
 
-3. Start the server:
+3. Start the app
 
 ```bash
 npm start
 ```
 
-4. Open:
+4. Open the UI
 
 ```text
 http://localhost:3000
@@ -82,11 +75,9 @@ http://localhost:3000
 
 ### `POST /chat`
 
-Request body:
-
 ```json
 {
-  "message": "Explain recursion simply"
+  "message": "apple = banana"
 }
 ```
 
@@ -94,33 +85,31 @@ Response:
 
 ```json
 {
-  "reply": "Recursion is when a function calls itself...",
-  "queuedTaskId": "p_1234567890"
+  "reply": "Understood. I will treat apple as banana for you.",
+  "confidence": 94,
+  "score": 93,
+  "queuedTaskId": null,
+  "storedFacts": [
+    {
+      "key": "apple",
+      "value": "banana",
+      "source": "regex"
+    }
+  ]
 }
 ```
 
-`queuedTaskId` is `null` when no follow-up task was created.
+### `GET /updates?since=0`
 
-### `GET /health`
+Returns improved offline answers that were generated after the given timestamp.
 
-Returns a small health payload:
+## Important files
 
-```json
-{
-  "ok": true,
-  "lastSeen": 1712345678901
-}
-```
-
-## Background worker behavior
-
-- The server marks the user as idle after 60 seconds of inactivity.
-- Every 15 seconds, the scheduler may process one queued task.
-- Each task gets up to 3 attempts by default.
-- Tasks are archived into `memory/longterm.json`.
-- Problem files are deleted after the task is archived.
-
-## Notes
-
-- The app currently uses a very basic rule for queueing follow-up work: if the immediate reply is shorter than 50 characters, the original prompt is queued.
-- There are no automated tests yet, but the runtime now has better validation and error handling around malformed JSON, empty requests, and failed AI responses.
+- `core/brain.js`: central orchestration
+- `core/memory.js`: extraction, storage, prompt memory injection, updates
+- `core/context.js`: full prompt context builder
+- `core/thinker.js`: first-pass answer generation
+- `core/critic.js`: structured critique and improvement scoring
+- `core/finalizer.js`: final polished answer
+- `core/scheduler.js`: offline loop control
+- `core/taskManager.js`: queued background task persistence
