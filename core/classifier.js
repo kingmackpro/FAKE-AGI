@@ -1,4 +1,4 @@
-const { chat } = require("./ai");
+const { chatText } = require("./ai");
 
 const SIMPLE_CHAT_PATTERNS = [
   /^(hi|hey|hello|yo|sup)$/i,
@@ -6,65 +6,82 @@ const SIMPLE_CHAT_PATTERNS = [
   /^(yes|no|maybe)$/i
 ];
 
-const DEEP_REASONING_PATTERNS = [
-  /\b(compare|analy[sz]e|reason|plan|design|debug|fix|improve|refactor|strategy)\b/i,
-  /\bwhy\b/i,
-  /\bhow\b/i,
-  /\bstep by step\b/i,
-  /\bpros and cons\b/i,
-  /\barchitecture\b/i
-];
-
 const MEMORY_PATTERNS = [
   /^([^=\n]{1,80})\s*=\s*([^=\n]{1,120})$/i,
   /^remember\s+(?:that\s+)?/i
+];
+
+const COMPLEX_PATTERNS = [
+  /\bcompare\b/i,
+  /\bdebug\b/i,
+  /\brefactor\b/i,
+  /\bstrategy\b/i,
+  /\barchitecture\b/i,
+  /\bprove\b/i,
+  /\banaly[sz]e\b/i,
+  /\bstep by step\b/i,
+  /\bpros and cons\b/i
+];
+
+const MEDIUM_PATTERNS = [
+  /\bhow\b/i,
+  /\bwhy\b/i,
+  /\bexplain\b/i,
+  /\bhelp me\b/i,
+  /\bwhat is\b/i
 ];
 
 function deterministicClassification(userInput) {
   const text = String(userInput || "").trim();
 
   if (!text) {
-    return "NO";
+    return "SIMPLE";
   }
 
   if (SIMPLE_CHAT_PATTERNS.some((pattern) => pattern.test(text))) {
-    return "NO";
+    return "SIMPLE";
   }
 
   if (MEMORY_PATTERNS.some((pattern) => pattern.test(text))) {
-    return "NO";
+    return "SIMPLE";
+  }
+
+  if (COMPLEX_PATTERNS.some((pattern) => pattern.test(text))) {
+    return "COMPLEX";
+  }
+
+  if (text.length > 220) {
+    return "COMPLEX";
+  }
+
+  if (MEDIUM_PATTERNS.some((pattern) => pattern.test(text))) {
+    return "MEDIUM";
   }
 
   if (text.length < 20 && !text.includes("?")) {
-    return "NO";
-  }
-
-  if (DEEP_REASONING_PATTERNS.some((pattern) => pattern.test(text))) {
-    return "YES";
-  }
-
-  if (text.length > 140) {
-    return "YES";
+    return "SIMPLE";
   }
 
   return null;
 }
 
-async function classifyProblem(userInput) {
+async function classifyMessage(userInput) {
   const deterministic = deterministicClassification(userInput);
   if (deterministic) {
     return deterministic;
   }
 
-  const result = await chat({
+  const result = await chatText({
     messages: [
       {
         role: "system",
         content: [
-          "Classify whether the user's message needs deep background reasoning.",
-          "Return only YES or NO.",
-          "YES only for complex tasks that benefit from deeper offline improvement.",
-          "NO for greetings, normal chat, simple answers, and memory statements."
+          "Classify the user's message into exactly one of these labels:",
+          "SIMPLE, MEDIUM, COMPLEX.",
+          "Return only the label.",
+          "SIMPLE means quick direct reply only.",
+          "MEDIUM means one-pass mini multi-agent fast pipeline.",
+          "COMPLEX means deep background task is justified."
         ].join(" ")
       },
       {
@@ -77,7 +94,20 @@ async function classifyProblem(userInput) {
     }
   });
 
-  return /\bYES\b/i.test(result) ? "YES" : "NO";
+  const normalized = String(result).trim().toUpperCase();
+  if (normalized.includes("COMPLEX")) {
+    return "COMPLEX";
+  }
+
+  if (normalized.includes("MEDIUM")) {
+    return "MEDIUM";
+  }
+
+  return "SIMPLE";
 }
 
-module.exports = { classifyProblem };
+function classifyProblem(userInput) {
+  return classifyMessage(userInput).then((level) => (level === "COMPLEX" ? "YES" : "NO"));
+}
+
+module.exports = { classifyMessage, classifyProblem };

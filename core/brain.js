@@ -1,6 +1,6 @@
-const { classifyProblem } = require("./classifier");
+const { classifyMessage } = require("./classifier");
 const { runCritic } = require("./critic");
-const { runFastResponder } = require("./fastResponder");
+const { runFastResponder, runFastResponderWithMetrics } = require("./fastResponder");
 const { runFinalizer } = require("./finalizer");
 const { extractAndStoreFacts, pushUpdate, rememberInteraction, removeTaskMemory } = require("./memory");
 const {
@@ -19,6 +19,7 @@ const { runThinker } = require("./thinker");
 const TARGET_CONFIDENCE = 90;
 const TARGET_SCORE = 90;
 const MAX_STAGNANT_ITERATIONS = 2;
+const MAX_FAST_TIME = 1500;
 const STOP_PATTERNS = [
   /\bstop working on that\b/i,
   /\bforget that problem\b/i,
@@ -53,7 +54,7 @@ const STOPWORDS = new Set([
 ]);
 
 function naturalFollowUpMessage(classification, taskId) {
-  if (classification === "YES" && taskId) {
+  if (classification === "COMPLEX" && taskId) {
     return "I'll keep working on a stronger answer for you in the background.";
   }
 
@@ -246,9 +247,9 @@ function progressTaskByMessage(userInput) {
   };
 }
 
-async function runFastMode({ userInput }) {
+async function runSimpleFastMode({ userInput }) {
   const storedFacts = await extractAndStoreFacts(userInput);
-  const reply = await runFastResponder({
+  const fastResponse = await runFastResponderWithMetrics({
     userInput,
     task: {
       id: null,
@@ -259,14 +260,129 @@ async function runFastMode({ userInput }) {
     }
   });
 
-  logAgent(null, "fast", "fast_responder", reply);
+  logAgent(null, "fast", "fast_responder", fastResponse.content, {
+    confidence: null,
+    score: null
+  });
+  logAgent(null, "fast", "metrics", `fast ttft=${fastResponse.metrics.ttftMs}ms total=${fastResponse.metrics.totalMs}ms`);
 
   return {
-    answer: reply,
+    answer: fastResponse.content,
     score: null,
     confidence: null,
-    storedFacts
+    storedFacts,
+    metrics: fastResponse.metrics
   };
+}
+
+async function runMediumFastMode({ userInput }) {
+  const storedFacts = await extractAndStoreFacts(userInput);
+  const startedAt = Date.now();
+  const thinkerDraft = await runThinker({
+    userInput,
+    task: {
+      id: null,
+      attempts: 0,
+      maxIterations: 0,
+      bestAnswer: "",
+      bestConfidence: 0
+    },
+    priorDraft: "",
+    mode: "fast"
+  });
+
+  logAgent(null, "fast", "thinker", thinkerDraft);
+
+  let critique = null;
+  let finalAnswer;
+  const elapsedAfterThinker = Date.now() - startedAt;
+
+  if (elapsedAfterThinker < MAX_FAST_TIME) {
+    const criticBudget = Math.max(1, MAX_FAST_TIME - elapsedAfterThinker);
+    critique = await Promise.race([
+      runCritic({
+        userInput,
+        task: {
+          id: null,
+          attempts: 0,
+          maxIterations: 0,
+          bestAnswer: "",
+          bestConfidence: 0
+        },
+        draft: thinkerDraft,
+        mode: "fast"
+      }),
+      new Promise((resolve) => {
+        setTimeout(() => resolve(null), criticBudget);
+      })
+    ]);
+  }
+
+  if (critique) {
+    logAgent(null, "fast", "critic", critique.improvedAnswer || critique.issues.join("; "), {
+      score: critique.score,
+      confidence: critique.confidence
+    });
+
+    finalAnswer = await runFinalizer({
+      userInput,
+      task: {
+        id: null,
+        attempts: 0,
+        maxIterations: 0,
+        bestAnswer: "",
+        bestConfidence: 0
+      },
+      draft: critique.improvedAnswer || thinkerDraft,
+      critique,
+      mode: "fast"
+    });
+  } else {
+    logAgent(null, "fast", "system", "Fast critic skipped due to time budget.");
+    finalAnswer = await runFinalizer({
+      userInput,
+      task: {
+        id: null,
+        attempts: 0,
+        maxIterations: 0,
+        bestAnswer: "",
+        bestConfidence: 0
+      },
+      draft: thinkerDraft,
+      critique: {
+        score: null,
+        confidence: null,
+        issues: ["critic skipped due to timeout"]
+      },
+      mode: "fast"
+    });
+  }
+
+  const totalMs = Date.now() - startedAt;
+  logAgent(null, "fast", "finalizer", finalAnswer, {
+    score: critique?.score ?? null,
+    confidence: critique?.confidence ?? null
+  });
+  logAgent(null, "fast", "metrics", `fast ttft=${elapsedAfterThinker}ms total=${totalMs}ms`);
+
+  return {
+    answer: finalAnswer,
+    score: critique?.score ?? null,
+    confidence: critique?.confidence ?? null,
+    storedFacts,
+    metrics: {
+      ttftMs: elapsedAfterThinker,
+      totalMs
+    }
+  };
+}
+
+async function runFastMode({ userInput, classification }) {
+  if (classification === "MEDIUM" || classification === "COMPLEX") {
+    return runMediumFastMode({ userInput });
+  }
+
+  return runSimpleFastMode({ userInput });
 }
 
 async function runDeepMode({ userInput, task }) {
@@ -337,10 +453,10 @@ async function handleUserMessage(userInput) {
     return progressTaskByMessage(userInput);
   }
 
-  const classification = await classifyProblem(userInput);
+  const classification = await classifyMessage(userInput);
   logAgent(null, "fast", "classifier", classification);
 
-  const fastResult = await runFastMode({ userInput });
+  const fastResult = await runFastMode({ userInput, classification });
 
   rememberInteraction({
     userInput,
@@ -349,12 +465,12 @@ async function handleUserMessage(userInput) {
     mode: "fast"
   });
 
-  const queuedTaskId = classification === "YES"
+  const queuedTaskId = classification === "COMPLEX"
     ? enqueueImprovementTask({
         userInput,
         currentAnswer: fastResult.answer,
-        confidence: 0,
-        score: 0
+        confidence: fastResult.confidence ?? 0,
+        score: fastResult.score ?? 0
       })
     : null;
 
@@ -366,7 +482,9 @@ async function handleUserMessage(userInput) {
     reply: fastResult.answer,
     queuedTaskId,
     followUpMessage: naturalFollowUpMessage(classification, queuedTaskId),
-    storedFacts: fastResult.storedFacts
+    storedFacts: fastResult.storedFacts,
+    classification,
+    metrics: fastResult.metrics
   };
 }
 

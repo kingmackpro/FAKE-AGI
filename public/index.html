@@ -94,6 +94,18 @@ body {
   font-size: 13px;
 }
 
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .header-actions {
   display: flex;
   gap: 10px;
@@ -113,6 +125,13 @@ body {
 .primary-button {
   background: linear-gradient(135deg, #4f8cff, #2563eb);
   border: none;
+}
+
+.ghost-button:disabled,
+.primary-button:disabled,
+input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .stream,
@@ -303,6 +322,7 @@ input::placeholder {
           <div>
             <h1 class="title">Fake AGI</h1>
             <div class="subtitle">Interactive multi-agent chat with background reasoning</div>
+            <div class="status-pill" id="statusPill">⚡ Waking up AI brain...</div>
           </div>
           <div class="header-actions">
             <button class="ghost-button" id="clearButton" type="button">Clear Memory</button>
@@ -349,6 +369,7 @@ const AGENT_NAMES = new Set(["thinker", "critic", "finalizer"]);
 
 let lastUpdateTimestamp = 0;
 let lastThoughtTimestamp = 0;
+let systemState = "booting";
 
 const messages = document.getElementById("messages");
 const thoughts = document.getElementById("thoughts");
@@ -356,6 +377,27 @@ const agentLogs = document.getElementById("agentLogs");
 const input = document.getElementById("input");
 const sendButton = document.getElementById("sendButton");
 const clearButton = document.getElementById("clearButton");
+const statusPill = document.getElementById("statusPill");
+
+function updateSystemState(nextState, modelReady) {
+  systemState = nextState || "booting";
+
+  if (!modelReady || systemState === "booting") {
+    statusPill.textContent = "⚡ Waking up AI brain...";
+    input.disabled = true;
+    sendButton.disabled = true;
+    return;
+  }
+
+  if (systemState === "busy") {
+    statusPill.textContent = "🟡 AI Thinking";
+  } else {
+    statusPill.textContent = "🟢 AI Online";
+  }
+
+  input.disabled = false;
+  sendButton.disabled = false;
+}
 
 function trimChildren(container, limit) {
   while (container.children.length > limit) {
@@ -450,6 +492,10 @@ function clearUi() {
 }
 
 async function send() {
+  if (systemState === "booting") {
+    return;
+  }
+
   const text = input.value.trim();
   if (!text) return;
 
@@ -461,7 +507,7 @@ async function send() {
   messages.appendChild(thinkingBubble);
   messages.scrollTop = messages.scrollHeight;
 
-  sendButton.disabled = true;
+  updateSystemState("busy", true);
 
   try {
     const response = await fetch("/chat", {
@@ -477,6 +523,7 @@ async function send() {
       throw new Error(data.error || "Request failed");
     }
 
+    updateSystemState(data.systemState || "ready", true);
     appendMessage(data.reply, "bot");
 
     if (data.followUpMessage) {
@@ -484,9 +531,8 @@ async function send() {
     }
   } catch (error) {
     thinkingBubble.remove();
+    updateSystemState("ready", true);
     appendMessage(error.message || "Request failed", "bot");
-  } finally {
-    sendButton.disabled = false;
   }
 }
 
@@ -527,6 +573,16 @@ async function pollUpdates() {
   }
 }
 
+async function pollHealth() {
+  try {
+    const response = await fetch("/health");
+    const data = await response.json();
+    updateSystemState(data.systemState, data.modelReady);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 async function pollThoughts() {
   try {
     const response = await fetch(`/thoughts?since=${lastThoughtTimestamp}`);
@@ -557,9 +613,10 @@ input.addEventListener("keydown", function (event) {
 
 setInterval(pollUpdates, 5000);
 setInterval(pollThoughts, 2500);
+setInterval(pollHealth, 2000);
+pollHealth();
 pollUpdates();
 pollThoughts();
-input.focus();
 </script>
 </body>
 </html>

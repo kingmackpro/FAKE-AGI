@@ -1,4 +1,4 @@
-const { chat } = require("./ai");
+const { chatText } = require("./ai");
 const { buildContext } = require("./context");
 
 const FINALIZER_PROMPT = [
@@ -10,7 +10,7 @@ const FINALIZER_PROMPT = [
 ].join(" ");
 
 async function runFinalizer({ userInput, task, draft, critique, mode }) {
-  return chat({
+  return chatText({
     messages: buildContext({
       agentPrompt: FINALIZER_PROMPT,
       userInput,

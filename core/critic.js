@@ -23,11 +23,12 @@ async function runCritic({ userInput, task, draft, mode }) {
   });
 
   return {
-    score: Math.max(0, Math.min(100, Number.parseInt(String(result.score || 0), 10) || 0)),
-    confidence: Math.max(0, Math.min(100, Number.parseInt(String(result.confidence || 0), 10) || 0)),
-    issues: Array.isArray(result.issues) ? result.issues : [],
-    improvedAnswer: String(result.improved_answer || draft).trim(),
-    shouldContinue: result.should_continue !== false
+    score: Math.max(0, Math.min(100, Number.parseInt(String(result.data.score || 0), 10) || 0)),
+    confidence: Math.max(0, Math.min(100, Number.parseInt(String(result.data.confidence || 0), 10) || 0)),
+    issues: Array.isArray(result.data.issues) ? result.data.issues : [],
+    improvedAnswer: String(result.data.improved_answer || draft).trim(),
+    shouldContinue: result.data.should_continue !== false,
+    metrics: result.metrics
   };
 }
 

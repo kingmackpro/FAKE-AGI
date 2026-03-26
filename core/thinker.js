@@ -1,4 +1,4 @@
-const { chat } = require("./ai");
+const { chatText } = require("./ai");
 const { buildContext } = require("./context");
 
 const THINKER_PROMPT = [
@@ -10,7 +10,7 @@ const THINKER_PROMPT = [
 ].join(" ");
 
 async function runThinker({ userInput, task, priorDraft, mode }) {
-  return chat({
+  return chatText({
     messages: buildContext({
       agentPrompt: THINKER_PROMPT,
       userInput,

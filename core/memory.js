@@ -93,11 +93,11 @@ async function extractFactsWithModel(userInput) {
       }
     });
 
-    if (!Array.isArray(result.facts)) {
+    if (!Array.isArray(result.data?.facts)) {
       return [];
     }
 
-    return result.facts
+    return result.data.facts
       .filter((fact) => fact && fact.key && fact.value)
       .map((fact) => ({
         key: String(fact.key).trim(),

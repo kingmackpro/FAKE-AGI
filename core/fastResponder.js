@@ -1,4 +1,4 @@
-const { chat } = require("./ai");
+const { chat, chatText } = require("./ai");
 const { buildContext } = require("./context");
 
 const FAST_RESPONDER_PROMPT = [
@@ -10,6 +10,20 @@ const FAST_RESPONDER_PROMPT = [
 ].join(" ");
 
 async function runFastResponder({ userInput, task }) {
+  return chatText({
+    messages: buildContext({
+      agentPrompt: FAST_RESPONDER_PROMPT,
+      userInput,
+      task,
+      mode: "fast"
+    }),
+    options: {
+      temperature: 0.3
+    }
+  });
+}
+
+async function runFastResponderWithMetrics({ userInput, task }) {
   return chat({
     messages: buildContext({
       agentPrompt: FAST_RESPONDER_PROMPT,
@@ -23,4 +37,4 @@ async function runFastResponder({ userInput, task }) {
   });
 }
 
-module.exports = { runFastResponder };
+module.exports = { runFastResponder, runFastResponderWithMetrics };
